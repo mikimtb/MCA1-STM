@@ -23,8 +23,8 @@ static void parse_crc();
 /** Callback function pointer, initialized to point on wait for start at the beginning */
 fptr_t parse_next = wait_for_adr;
 /** Data structure that will be used to parse received data into message */
-packet_t packet_in = {0, 0, 0, {0}, 0};
-packet_t packet_out = {0, 0, 0, {0}, 0};
+packet_t packet_in = {0, 0, 0, {0}};
+packet_t packet_out = {0, 0, 0, {0}};
 /** FLAG that trigger message parser */
 static bool NEW_MSG_RECEIVED_FLAG = false;
 /** Counter that is used to count number of parsed data */
