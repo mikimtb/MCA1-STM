@@ -28,6 +28,7 @@ int main(void)
 	console_init();
 #endif
 	uart_init(115200);
+	protocol_init_state_machine();
 	gpio_init();
 	GPIO_WriteBit(GPIOC, GPIO_Pin_8, Bit_RESET);
 

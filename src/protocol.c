@@ -11,20 +11,40 @@
 /**
  * Static function prototypes
  */
-static void wait_for_adr();
-static void parse_id();
-static void parse_length();
-static void parse_data();
-static void parse_crc();
+static state_e wait_for_adr(transition_e *e);
+static state_e wait_id(transition_e *e);
+static state_e wait_length(transition_e *e);
+static state_e wait_data(transition_e *e);
+static state_e wait_crc(transition_e *e);
+static state_e send_NACK(transition_e *e);
+static state_e process_msg(transition_e *e);
+static bool sm_apply_event(state_e *s, transition_e *e);
+
+/**
+ * Protocol parser state machine transition matrix
+ */
+struct state_transition state_trans[N_TRANSITIONS][N_STATES] =
+{
+/*						 PARSE_ADDRESS   PARSE_ID   PARSE_LENGTH   RECEIVE_DATA  PARSE_CRC8     SEND_NACK    PROCESS_MSG */
+/* reset_sm */			{wait_for_adr, wait_for_adr, wait_for_adr, wait_for_adr, wait_for_adr, wait_for_adr, wait_for_adr},
+/* adr_received */		{wait_id,      NULL,         NULL,         NULL,         NULL,         NULL,         NULL        },
+/* ID_received */		{NULL,         wait_length,  NULL,         NULL,         NULL,         NULL,         NULL        },
+/* length_received */	{NULL,         NULL,         wait_data,    NULL,         NULL,         NULL,         NULL        },
+/* parse_data */		{NULL,         NULL,         NULL,         wait_data,    NULL,         NULL,         NULL        },
+/* data_received */		{NULL,         NULL,         NULL,         wait_crc,     NULL,         NULL,         NULL        },
+/* CRC8_failed */		{NULL,         NULL,         NULL,         NULL,         send_NACK,    NULL,         NULL        },
+/* CRC8_ok */           {NULL,         NULL,         NULL,         NULL,         process_msg,  NULL,         NULL        }
+};
 
 /**
  * Global variables
  */
-/** Callback function pointer, initialized to point on wait for start at the beginning */
-fptr_t parse_next = wait_for_adr;
 /** Data structure that will be used to parse received data into message */
 packet_t packet_in = {0, 0, 0, {0}};
 packet_t packet_out = {0, 0, 0, {0}};
+/** State machine state and transition variables */
+state_e s;
+transition_e e;
 /** FLAG that trigger message parser */
 static bool NEW_MSG_RECEIVED_FLAG = false;
 /** Counter that is used to count number of parsed data */
@@ -87,142 +107,221 @@ static uint8_t crc8(packet_t *p, uint16_t size)
 /**
  * Callback that wait for device address character
  */
-static void wait_for_adr()
+static state_e wait_for_adr(transition_e *e)
 {
-    /** If there is no data available, return */
-    if (!uart_bkbhit())
-        return;
+	uint8_t c;
 
-    uint8_t c;
-
-    /** Check for the data */
-    if (uart_bgetc(&c))
+    /* If there is no data available, return */
+    if (uart_bkbhit())
     {
-    	/** Store device ADDRESS to the packet buffer */
-    	packet_in.DEV_ADR = c;
-    	rx_count++;
-    	/** Go to next state */
-    	parse_next = parse_id;
+		/* Check for the data */
+		if (uart_bgetc(&c))
+		{
+			/** Store device ADDRESS to the packet buffer */
+			packet_in.DEV_ADR = c;
+			rx_count++;
+			/** Go to next state */
+			*e = adr_received;
+		}
     }
+
+    return PARSE_ADDRESS;
 }
 
 /**
  * Callback that read third character identifier, stores it in data_id
  */
-static void parse_id()
+static state_e wait_id(transition_e *e)
 {
-    /** If there is no data available, return */
-    if (!uart_bkbhit())
-        return;
+	uint8_t c;
 
-    uint8_t c;
-
-    /** Check for the data */
-    if (uart_bgetc(&c))
+    /* If there is no data available, return */
+    if (uart_bkbhit())
     {
-    	/** Store device ADDRESS to the packet buffer */
-    	packet_in.ID = c;
-    	rx_count++;
-    	/** Go to next state */
-    	parse_next = parse_length;
+		/* Check for the data */
+		if (uart_bgetc(&c))
+		{
+			/** Store device ADDRESS to the packet buffer */
+			packet_in.ID = c;
+			rx_count++;
+			/** Go to next state */
+			*e = ID_received;
+		}
     }
+
+    return PARSE_ID;
 }
 
 /**
  * Callback that read protocol data length
  */
-static void parse_length()
+static state_e wait_length(transition_e *e)
 {
-    /** If there is no data available, return */
-    if (!uart_bkbhit())
-        return;
+	uint8_t c;
 
-    uint8_t c;
-
-    /** Check for the data */
-    if (uart_bgetc(&c))
+    /* If there is no data available, return */
+    if (uart_bkbhit())
     {
-    	/** Store device ADDRESS to the packet buffer */
-    	packet_in.LENGTH = c;
-    	rx_count++;
-    	/** Go to next state */
-    	parse_next = parse_data;
+		/* Check for the data */
+		if (uart_bgetc(&c))
+		{
+			/** Store device ADDRESS to the packet buffer */
+			packet_in.LENGTH = c;
+			rx_count++;
+			/** Go to next state */
+			*e = length_received;
+		}
     }
+
+    return PARSE_LENGTH;
 }
 
 /**
  * Callback that read data and store it in packet.DATA buffer
  */
-static void parse_data()
+static state_e wait_data(transition_e *e)
 {
-    /** If there is no data available, return */
-    if (!uart_bkbhit())
-        return;
+	uint8_t c;
 
-    uint8_t c;
-    /**
-     * ADR, ID and LENGTH are received. Next is payload which should be stored in
-     * DATA buffer. This state will be active until LENGTH bytes are not received
-     */
-    /** Check for the data */
-	if (uart_bgetc(&c))
-	{
-		packet_in.DATA[rx_count - PACKET_HEADER_SIZE] = c;
-		rx_count++;
-		/** State transition rule check */
-		if ((rx_count-PACKET_HEADER_SIZE) == packet_in.LENGTH)
+    /* If there is no data available, return */
+    if (uart_bkbhit())
+    {
+		/**
+		 * ADR, ID and LENGTH are received. Next is payload which should be stored in
+		 * DATA buffer. This state will be active until LENGTH bytes are not received
+		 */
+		/** Check for the data */
+		if (uart_bgetc(&c))
 		{
-			parse_next = parse_crc;			/** Go to next state */
+			packet_in.DATA[rx_count - PACKET_HEADER_SIZE] = c;
+			rx_count++;
+			/** State transition rule check */
+			if ((rx_count-PACKET_HEADER_SIZE) == packet_in.LENGTH)
+			{
+				/** Go to next state */
+				*e = data_received;	  /* Data has been received, next byte representing checksum */
+			}
+			else
+			{
+				/* Stay in current state */
+				*e = parse_data;    /* Still there is a data that should be received until checksum is sent */
+			}
 		}
-	}
+    }
+
+	return RECEIVE_DATA;
 }
 
 /**
  * Callback that read checksum and store it in packet.CRC8
  */
-static void parse_crc()
+static state_e wait_crc(transition_e *e)
 {
-	/** If there is no data available, return */
-	if (!uart_bkbhit())
-		return;
-
 	uint8_t c;
 
-	/** Check for the data */
-	if (uart_bgetc(&c))
-	{
-		packet_in.DATA[rx_count - PACKET_HEADER_SIZE] = c;
-		rx_count++;
-		/** Check CRC */
-		if (packet_in.DATA[rx_count - PACKET_HEADER_SIZE - 1] != crc8(&packet_in, rx_count-1))
+    /* If there is no data available, return */
+    if (uart_bkbhit())
+    {
+		/** Check for the data */
+		if (uart_bgetc(&c))
 		{
-			rx_count = 0;
-			parse_next = wait_for_adr;
-			/**
-			 *  Request for retransmission should be added here if it's needed
-			 *  printf(uart_bputc, "CRC failed!\r\n");
-			 */
-			return;
+			packet_in.DATA[rx_count - PACKET_HEADER_SIZE] = c;
+			/** Check CRC */
+			if (packet_in.DATA[rx_count - PACKET_HEADER_SIZE] != crc8(&packet_in, rx_count))
+			{
+				*e = CRC8_failed;
+			}
+			else
+			{
+				*e = CRC8_ok;
+			}
 		}
+    }
 
-		NEW_MSG_RECEIVED_FLAG = true;
+	return PARSE_CRC8;
+}
 
-		rx_count = 0;
-		parse_next = wait_for_adr;
+/**
+ * Callback that sends NACK if received checksum is failed
+ * @param e[in] transition to next state state
+ * @return current state machine state
+ */
+static state_e send_NACK(transition_e *e)
+{
+	rx_count = 0;
+	NEW_MSG_RECEIVED_FLAG = false;
+	/*
+	 * NACK and request for retransmission should be coded here
+	 * printf(uart_bputc, "CRC failed!\r\n");
+	 */
+
+	/* Reset state machine */
+	*e = reset_sm;
+	return SEND_NACK;
+}
+
+/**
+ * Callback that initiate message processing
+ * @param e[in] transition to next state state
+ * @return current state machine state
+ */
+static state_e process_msg(transition_e *e)
+{
+	rx_count = 0;
+	NEW_MSG_RECEIVED_FLAG = true;
+
+	/* Reset state machine */
+	*e = reset_sm;
+
+	return PROCESS_MSG;
+}
+
+/**
+ * Function apply event to the state machine and call appropriate callback function
+ * @param s[in] current state machine state
+ * @param e[in] current transition event
+ * @return true if state machine error has been detected, false if there is no error
+ */
+static bool sm_apply_event(state_e *s, transition_e *e)
+{
+	bool sm_error = false;
+
+	if (*s >= N_STATES || *e >= N_TRANSITIONS)
+	{
+		sm_error = true;
 	}
+	else
+	{
+		*s = state_trans[*e][*s].state_fptr(e);
+		sm_error = false;
+	}
+
+	return sm_error;
 }
 
 /**
  * Public functions
  */
 
+void protocol_init_state_machine()
+{
+	s = PARSE_ADDRESS;
+	e = reset_sm;
+
+	rx_count = 0;
+	NEW_MSG_RECEIVED_FLAG = false;
+}
+
 bool protocol_parse_uart_data()
 {
 	bool msg_rcv_done = false;
     /** check state machine */
-	while(uart_bkbhit() && (!NEW_MSG_RECEIVED_FLAG))
+	if (sm_apply_event(&s, &e))
 	{
-		(*parse_next)();
+		/*
+		 *  State machine error should be handled here
+		 *  printf(uart_bputc, "SM Error!\r\n");
+		 */
 	}
 
 	if (NEW_MSG_RECEIVED_FLAG)

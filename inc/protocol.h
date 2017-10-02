@@ -27,11 +27,42 @@
 #define CRC_SIZE			1					/** Define how many bytes are used for CRC */
 
 /**
- * Callback function type definition
+ * Parser state machine states definition
  */
-typedef void (*fptr_t)(void);
+typedef enum
+{
+	PARSE_ADDRESS,
+	PARSE_ID,
+	PARSE_LENGTH,
+	RECEIVE_DATA,
+	PARSE_CRC8,
+	SEND_NACK,
+	PROCESS_MSG,
+	N_STATES
+} state_e;
+
+typedef enum
+{
+	reset_sm,
+	adr_received,
+	ID_received,
+	length_received,
+	parse_data,
+	data_received,
+	CRC8_failed,
+	CRC8_ok,
+	N_TRANSITIONS
+} transition_e;
 
 /**
+ * structure that is used to handle transition between FSM states
+ */
+struct state_transition
+{
+	state_e (*state_fptr)(transition_e *e);
+};
+
+/*
  * User type definitions
  */
 /**
@@ -48,6 +79,10 @@ typedef struct __attribute__((packed))
 /**
  * Function definition
  */
+/**
+ * Function that will initialize protocol state machine
+ */
+void protocol_init_state_machine(void);
 /**
  * Function call next callback in parser state machine
  * @return true if complete message is received, false if message is still uncompleted
